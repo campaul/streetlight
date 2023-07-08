@@ -2,6 +2,20 @@ use std::io::{prelude::*, BufReader, Cursor};
 
 pub use http::{header, Method, Request, Response, StatusCode, Version};
 
+fn parse_version(version: &str) -> std::io::Result<Version> {
+    match version {
+        "HTTP/0.9" => Ok(Version::HTTP_09),
+        "HTTP/1.0" => Ok(Version::HTTP_10),
+        "HTTP/1.1" => Ok(Version::HTTP_11),
+        "HTTP/2.0" => Ok(Version::HTTP_2),
+        "HTTP/3.0" => Ok(Version::HTTP_3),
+        _ => Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("Invalid HTTP version: {}", version),
+        )),
+    }
+}
+
 pub fn read_request(reader: &mut dyn Read) -> std::io::Result<Request<impl Read>> {
     let mut buf_reader = BufReader::new(reader);
     let mut request = Request::builder();
@@ -24,19 +38,7 @@ pub fn read_request(reader: &mut dyn Read) -> std::io::Result<Request<impl Read>
 
     request = request.method(method);
     request = request.uri(uri);
-    request = request.version(match version {
-        "HTTP/0.9" => Version::HTTP_09,
-        "HTTP/1.0" => Version::HTTP_10,
-        "HTTP/1.1" => Version::HTTP_11,
-        "HTTP/2.0" => Version::HTTP_2,
-        "HTTP/3.0" => Version::HTTP_3,
-        _ => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Invalid HTTP version: {}", version),
-            ));
-        }
-    });
+    request = request.version(parse_version(version)?);
 
     let mut content_length = 0;
 
@@ -112,19 +114,7 @@ pub fn read_response(reader: &mut dyn Read) -> std::io::Result<Response<impl Rea
     let version = start_line_fields[0];
     let status = start_line_fields[1];
 
-    response = response.version(match version {
-        "HTTP/0.9" => Version::HTTP_09,
-        "HTTP/1.0" => Version::HTTP_10,
-        "HTTP/1.1" => Version::HTTP_11,
-        "HTTP/2.0" => Version::HTTP_2,
-        "HTTP/3.0" => Version::HTTP_3,
-        _ => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Invalid HTTP version: {}", version),
-            ));
-        }
-    });
+    response = response.version(parse_version(version)?);
     response = response.status(status);
 
     let mut content_length = 0;
