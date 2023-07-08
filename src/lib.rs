@@ -1,6 +1,7 @@
 use std::io::{prelude::*, BufReader, Cursor};
 
 pub use http::{header, Method, Request, Response, StatusCode, Version};
+use http::{HeaderName, HeaderValue};
 
 fn parse_version(version: &str) -> std::io::Result<Version> {
     match version {
@@ -12,6 +13,42 @@ fn parse_version(version: &str) -> std::io::Result<Version> {
         _ => Err(std::io::Error::new(
             std::io::ErrorKind::Other,
             format!("Invalid HTTP version: {}", version),
+        )),
+    }
+}
+
+// TODO: it's not correct to assume a header line is a valid unicode string
+// This needs to be updated to use bytes instead
+fn parse_header(line: &str) -> std::io::Result<(HeaderName, HeaderValue)> {
+    match line.split_once(":") {
+        Some((name, value)) => {
+            let value = value.trim();
+
+            let n = match header::HeaderName::try_from(name) {
+                Ok(n) => n,
+                Err(_) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("Invalid header name: {}", name),
+                    ));
+                }
+            };
+
+            let v = match header::HeaderValue::try_from(value) {
+                Ok(v) => v,
+                Err(_) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("Invalid header value: {}", value),
+                    ));
+                }
+            };
+
+            Ok((n, v))
+        }
+        None => Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("Unable to parse header line: {}", line),
         )),
     }
 }
@@ -50,40 +87,16 @@ pub fn read_request(reader: &mut dyn Read) -> std::io::Result<Request<impl Read>
             break;
         }
 
-        match line.split_once(":") {
-            Some((name, value)) => {
-                let value = value.trim();
+        let (name, value) = parse_header(&line)?;
 
-                if let Err(_) = header::HeaderName::try_from(name) {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Invalid header name: {}", name),
-                    ));
-                }
-
-                if let Err(_) = header::HeaderValue::try_from(value) {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Invalid header value: {}", value),
-                    ));
-                }
-
-                request = request.header(name, value);
-
-                if name == header::CONTENT_LENGTH {
-                    content_length = value.parse::<u64>().unwrap();
-                }
-            }
-            None => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Unable to parse header line: {}", line),
-                ))
-            }
+        if name == header::CONTENT_LENGTH {
+            content_length = value.to_str().unwrap().parse::<usize>().unwrap();
         }
+
+        request = request.header(name, value);
     }
 
-    let mut body: Vec<u8> = vec![0; content_length as usize];
+    let mut body: Vec<u8> = vec![0; content_length];
 
     if content_length > 0 {
         buf_reader.read_exact(&mut body)?;
@@ -127,37 +140,13 @@ pub fn read_response(reader: &mut dyn Read) -> std::io::Result<Response<impl Rea
             break;
         }
 
-        match line.split_once(":") {
-            Some((name, value)) => {
-                let value = value.trim();
+        let (name, value) = parse_header(&line)?;
 
-                if let Err(_) = header::HeaderName::try_from(name) {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Invalid header name: {}", name),
-                    ));
-                }
-
-                if let Err(_) = header::HeaderValue::try_from(value) {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Invalid header value: {}", value),
-                    ));
-                }
-
-                response = response.header(name, value);
-
-                if name == header::CONTENT_LENGTH {
-                    content_length = value.parse::<u64>().unwrap();
-                }
-            }
-            None => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Unable to parse header line: {}", line),
-                ))
-            }
+        if name == header::CONTENT_LENGTH {
+            content_length = value.to_str().unwrap().parse::<usize>().unwrap();
         }
+
+        response = response.header(name, value);
     }
 
     let mut body: Vec<u8> = vec![0; content_length as usize];
