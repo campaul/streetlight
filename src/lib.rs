@@ -1,6 +1,6 @@
 use std::io::{prelude::*, BufReader, Cursor};
 
-pub use http::{header, Method, Request, Response, StatusCode, Version};
+pub use http::{header, Method, Request, Response, StatusCode, Uri, Version};
 use http::{HeaderName, HeaderValue};
 
 fn parse_version(version: &str) -> std::io::Result<Version> {
