@@ -1,6 +1,6 @@
-use std::io::{prelude::*, BufReader, Cursor, Read};
+use std::io::{prelude::*, BufReader, Cursor};
 
-pub use http::{Request, Response};
+pub use http::{header, Method, Request, Response, StatusCode, Version};
 
 pub fn read_request(reader: &mut dyn Read) -> std::io::Result<Request<impl Read>> {
     let mut buf_reader = BufReader::new(reader);
@@ -25,11 +25,11 @@ pub fn read_request(reader: &mut dyn Read) -> std::io::Result<Request<impl Read>
     request = request.method(method);
     request = request.uri(uri);
     request = request.version(match version {
-        "HTTP/0.9" => http::version::Version::HTTP_09,
-        "HTTP/1.0" => http::version::Version::HTTP_10,
-        "HTTP/1.1" => http::version::Version::HTTP_11,
-        "HTTP/2.0" => http::version::Version::HTTP_2,
-        "HTTP/3.0" => http::version::Version::HTTP_3,
+        "HTTP/0.9" => Version::HTTP_09,
+        "HTTP/1.0" => Version::HTTP_10,
+        "HTTP/1.1" => Version::HTTP_11,
+        "HTTP/2.0" => Version::HTTP_2,
+        "HTTP/3.0" => Version::HTTP_3,
         _ => {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
@@ -52,14 +52,14 @@ pub fn read_request(reader: &mut dyn Read) -> std::io::Result<Request<impl Read>
             Some((name, value)) => {
                 let value = value.trim();
 
-                if let Err(_) = http::header::HeaderName::try_from(name) {
+                if let Err(_) = header::HeaderName::try_from(name) {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::Other,
                         format!("Invalid header name: {}", name),
                     ));
                 }
 
-                if let Err(_) = http::header::HeaderValue::try_from(value) {
+                if let Err(_) = header::HeaderValue::try_from(value) {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::Other,
                         format!("Invalid header value: {}", value),
@@ -68,7 +68,7 @@ pub fn read_request(reader: &mut dyn Read) -> std::io::Result<Request<impl Read>
 
                 request = request.header(name, value);
 
-                if name == http::header::CONTENT_LENGTH {
+                if name == header::CONTENT_LENGTH {
                     content_length = value.parse::<u64>().unwrap();
                 }
             }
@@ -113,11 +113,11 @@ pub fn read_response(reader: &mut dyn Read) -> std::io::Result<Response<impl Rea
     let status = start_line_fields[1];
 
     response = response.version(match version {
-        "HTTP/0.9" => http::version::Version::HTTP_09,
-        "HTTP/1.0" => http::version::Version::HTTP_10,
-        "HTTP/1.1" => http::version::Version::HTTP_11,
-        "HTTP/2.0" => http::version::Version::HTTP_2,
-        "HTTP/3.0" => http::version::Version::HTTP_3,
+        "HTTP/0.9" => Version::HTTP_09,
+        "HTTP/1.0" => Version::HTTP_10,
+        "HTTP/1.1" => Version::HTTP_11,
+        "HTTP/2.0" => Version::HTTP_2,
+        "HTTP/3.0" => Version::HTTP_3,
         _ => {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
@@ -141,14 +141,14 @@ pub fn read_response(reader: &mut dyn Read) -> std::io::Result<Response<impl Rea
             Some((name, value)) => {
                 let value = value.trim();
 
-                if let Err(_) = http::header::HeaderName::try_from(name) {
+                if let Err(_) = header::HeaderName::try_from(name) {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::Other,
                         format!("Invalid header name: {}", name),
                     ));
                 }
 
-                if let Err(_) = http::header::HeaderValue::try_from(value) {
+                if let Err(_) = header::HeaderValue::try_from(value) {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::Other,
                         format!("Invalid header value: {}", value),
@@ -157,7 +157,7 @@ pub fn read_response(reader: &mut dyn Read) -> std::io::Result<Response<impl Rea
 
                 response = response.header(name, value);
 
-                if name == http::header::CONTENT_LENGTH {
+                if name == header::CONTENT_LENGTH {
                     content_length = value.parse::<u64>().unwrap();
                 }
             }
@@ -201,7 +201,7 @@ pub fn write_request(
 
     writer.write_all("\r\n".as_bytes())?;
 
-    match request.headers().get(http::header::CONTENT_LENGTH) {
+    match request.headers().get(header::CONTENT_LENGTH) {
         Some(v) => {
             let content_length = v.to_str().unwrap().parse::<u32>().unwrap();
             let mut body: Vec<u8> = vec![0; content_length as usize];
@@ -237,7 +237,7 @@ pub fn write_response(
 
     writer.write_all("\r\n".as_bytes())?;
 
-    match response.headers().get(http::header::CONTENT_LENGTH) {
+    match response.headers().get(header::CONTENT_LENGTH) {
         Some(v) => {
             let content_length = v.to_str().unwrap().parse::<u32>().unwrap();
             let mut body: Vec<u8> = vec![0; content_length as usize];
@@ -271,9 +271,9 @@ mod tests {
 
         assert!(request.method() == "GET");
         assert!(request.uri() == "/");
-        assert!(request.version() == http::version::Version::HTTP_11);
+        assert!(request.version() == Version::HTTP_11);
 
-        assert!(request.headers().get(http::header::HOST).unwrap() == "example.com");
+        assert!(request.headers().get(header::HOST).unwrap() == "example.com");
     }
 
     #[test]
@@ -286,18 +286,12 @@ mod tests {
 
         let mut response = read_response(&mut Cursor::new(response_text.as_bytes())).unwrap();
 
-        assert!(response.version() == http::version::Version::HTTP_11);
-        assert!(response.status() == http::StatusCode::OK);
+        assert!(response.version() == Version::HTTP_11);
+        assert!(response.status() == StatusCode::OK);
         assert!(response.status().canonical_reason().unwrap() == "OK");
 
-        assert!(response.headers().get(http::header::CONTENT_TYPE).unwrap() == "text/html");
-        assert!(
-            response
-                .headers()
-                .get(http::header::CONTENT_LENGTH)
-                .unwrap()
-                == "20"
-        );
+        assert!(response.headers().get(header::CONTENT_TYPE).unwrap() == "text/html");
+        assert!(response.headers().get(header::CONTENT_LENGTH).unwrap() == "20");
 
         let mut body_buffer: Vec<u8> = vec![0; 20];
         response.body_mut().read_exact(&mut body_buffer).unwrap();
@@ -309,11 +303,11 @@ mod tests {
     fn write_simple_request() {
         let body: Cursor<Vec<u8>> = Cursor::new(vec![]);
 
-        let request = http::Request::builder()
+        let request = Request::builder()
             .method("GET")
             .uri("/")
-            .version(http::Version::HTTP_11)
-            .header(http::header::HOST, "example.com")
+            .version(Version::HTTP_11)
+            .header(header::HOST, "example.com")
             .body(body)
             .unwrap();
 
@@ -331,11 +325,11 @@ mod tests {
     fn write_simple_response() {
         let body: Cursor<Vec<u8>> = Cursor::new("<h1>Hello World</h1>".as_bytes().to_vec());
 
-        let response = http::Response::builder()
-            .version(http::Version::HTTP_11)
-            .status(http::StatusCode::OK)
-            .header(http::header::CONTENT_TYPE, "text/html")
-            .header(http::header::CONTENT_LENGTH, 20)
+        let response = Response::builder()
+            .version(Version::HTTP_11)
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/html")
+            .header(header::CONTENT_LENGTH, 20)
             .body(body)
             .unwrap();
 
