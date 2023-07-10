@@ -234,6 +234,38 @@ pub fn write_response(
     Ok(())
 }
 
+pub fn read_chunk(reader: &mut dyn Read) -> std::io::Result<Vec<u8>> {
+    let mut buf_reader = BufReader::new(reader);
+
+    let mut len = String::new();
+    buf_reader.read_line(&mut len)?;
+
+    match len.trim().parse::<usize>() {
+        Ok(len) => {
+            let mut chunk: Vec<u8> = vec![0; len];
+
+            buf_reader.read_exact(&mut chunk)?;
+
+            let mut tail = String::new();
+            buf_reader.read_line(&mut tail)?;
+
+            Ok(chunk)
+        }
+        Err(_) => Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Invalid chunk size",
+        )),
+    }
+}
+
+pub fn write_chunk(writer: &mut dyn Write, chunk: &[u8]) -> std::io::Result<()> {
+    writer.write_all(format!("{}\r\n", chunk.len()).as_bytes())?;
+    writer.write_all(chunk)?;
+    writer.write_all("\r\n".as_bytes())?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::str;
