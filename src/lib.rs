@@ -60,12 +60,19 @@ pub fn read_request(reader: &mut dyn Read) -> std::io::Result<Request<impl Read>
     let mut start_line = String::new();
     buf_reader.read_line(&mut start_line)?;
 
+    if start_line.len() == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Connection Closed",
+        ));
+    }
+
     let start_line_fields = start_line.trim().split(" ").collect::<Vec<&str>>();
 
     if start_line_fields.len() != 3 {
         return Err(std::io::Error::new(
             std::io::ErrorKind::Other,
-            "Unable to parse start line",
+            format!("Unable to parse start line: {}", start_line),
         ));
     }
 
@@ -120,7 +127,7 @@ pub fn read_response(reader: &mut dyn Read) -> std::io::Result<Response<impl Rea
     if start_line_fields.len() != 2 && start_line_fields.len() != 3 {
         return Err(std::io::Error::new(
             std::io::ErrorKind::Other,
-            "Unable to parse start line",
+            format!("Unable to parse start line: {}", start_line),
         ));
     }
 

@@ -3,22 +3,32 @@ use std::{
     fs::{self, File},
     io::{Cursor, Write},
     net::TcpListener,
-    path::Path,
+    path::Path, ffi::OsStr,
 };
 
 use streetlight::{header, read_request, write_response, Response, StatusCode, Uri};
 
-fn write_not_found(w: &mut impl Write) -> std::io::Result<()> {
-    let response = Response::builder()
-        .status(StatusCode::NOT_FOUND)
-        .body(Cursor::new(vec![]))
-        .unwrap();
-
+fn log_and_write_response<T: std::io::Read>(w: &mut impl Write, response: Response<T>, filename: String) -> std::io::Result<()> {
+    println!("{} {}", response.status(), filename);
     write_response(w, response)
 }
 
+fn write_not_found(w: &mut impl Write, filename: String) -> std::io::Result<()> {
+    let response = Response::builder()
+        .status(StatusCode::NOT_FOUND)
+        .header(header::CONTENT_LENGTH, 0)
+        .body(Cursor::new(vec![]))
+        .unwrap();
+
+    log_and_write_response(w, response, filename)
+}
+
 fn safe_file_path(uri: &Uri) -> std::io::Result<Box<Path>> {
-    let relative_path = format!("./{}", uri);
+    let relative_path = match uri.path() {
+        "/" => String::from("./index.html"),
+        _ => format!("./{}", uri),
+    };
+
     let canonical_path = fs::canonicalize(relative_path)?.into_boxed_path();
 
     let pwd = env::current_dir()?.into_boxed_path();
@@ -33,32 +43,50 @@ fn safe_file_path(uri: &Uri) -> std::io::Result<Box<Path>> {
     ))
 }
 
+fn handle_request(s: &mut std::net::TcpStream) -> std::io::Result<()> {
+    let request = read_request(s)?;
+    let filename = format!("{}", request.uri());
+
+    match safe_file_path(request.uri()) {
+        Ok(path) => {
+            let content_type = match path.extension().and_then(OsStr::to_str) {
+                Some("html") => "text/html",
+                Some("css") => "text/css",
+                Some("js") => "text/javascript",
+                _ => "text/plain",
+            };
+
+            if let Ok(file) = File::open(path.clone()) {
+                if !file.metadata()?.is_file() {
+                    write_not_found(s, filename)?;
+                    return Ok(());
+                }
+
+                let response = Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_LENGTH, file.metadata()?.len())
+                    .header(header::CONTENT_TYPE, content_type)
+                    .body(file)
+                    .unwrap();
+
+                log_and_write_response(s, response, filename)?;
+            }
+        },
+        Err(_) => write_not_found(s, filename)?,
+    }
+
+    Ok(())
+}
+
 fn main() -> std::io::Result<()> {
-    let listener = TcpListener::bind("127.0.0.1:8080").unwrap();
+    let listener = TcpListener::bind("127.0.0.1:8080")?;
+
+    println!("Listening @ 127.0.0.1:8080\n");
 
     for stream in listener.incoming() {
         if let Ok(mut s) = stream {
-            let request = read_request(&mut s)?;
-
-            if let Ok(path) = safe_file_path(request.uri()) {
-                if let Ok(file) = File::open(path) {
-                    if !file.metadata()?.is_file() {
-                        write_not_found(&mut s)?;
-                        continue;
-                    }
-
-                    let response = Response::builder()
-                        .status(StatusCode::OK)
-                        .header(header::CONTENT_LENGTH, file.metadata()?.len())
-                        .header(header::CONTENT_TYPE, "text/plain")
-                        .body(file)
-                        .unwrap();
-
-                    write_response(&mut s, response)?;
-                }
-            }
-
-            write_not_found(&mut s)?;
+            // Ignore the browser dropping the connection
+            let _ = handle_request(&mut s);
         }
     }
 
