@@ -1,14 +1,22 @@
 use std::{
     env,
+    ffi::OsStr,
     fs::{self, File},
-    io::{Cursor, Write},
+    io::{BufReader, Cursor, Read, Write},
     net::TcpListener,
-    path::Path, ffi::OsStr,
+    path::Path,
 };
+
+use flate2::read::GzEncoder;
+use flate2::Compression;
 
 use streetlight::{header, read_request, write_response, Response, StatusCode, Uri};
 
-fn log_and_write_response<T: std::io::Read>(w: &mut impl Write, response: Response<T>, filename: String) -> std::io::Result<()> {
+fn log_and_write_response<T: std::io::Read>(
+    w: &mut impl Write,
+    response: Response<T>,
+    filename: String,
+) -> std::io::Result<()> {
     println!("{} {}", response.status(), filename);
     write_response(w, response)
 }
@@ -62,16 +70,21 @@ fn handle_request(s: &mut std::net::TcpStream) -> std::io::Result<()> {
                     return Ok(());
                 }
 
+                let mut gz = GzEncoder::new(BufReader::new(file), Compression::default());
+                let mut buffer = Vec::new();
+                gz.read_to_end(&mut buffer)?;
+
                 let response = Response::builder()
                     .status(StatusCode::OK)
-                    .header(header::CONTENT_LENGTH, file.metadata()?.len())
+                    .header(header::CONTENT_LENGTH, buffer.len())
                     .header(header::CONTENT_TYPE, content_type)
-                    .body(file)
+                    .header(header::CONTENT_ENCODING, "gzip")
+                    .body(buffer.as_slice())
                     .unwrap();
 
                 log_and_write_response(s, response, filename)?;
             }
-        },
+        }
         Err(_) => write_not_found(s, filename)?,
     }
 
