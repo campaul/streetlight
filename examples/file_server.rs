@@ -2,8 +2,8 @@ use std::{
     env,
     ffi::OsStr,
     fs::{self, File},
-    io::{BufReader, Cursor, Read, Write},
-    net::TcpListener,
+    io::{BufReader, Cursor, Read},
+    net::{TcpListener, TcpStream},
     path::Path,
 };
 
@@ -13,7 +13,7 @@ use flate2::Compression;
 use streetlight::{header, read_request, write_response, Response, StatusCode, Uri};
 
 fn log_and_write_response<T: std::io::Read>(
-    w: &mut impl Write,
+    w: &mut TcpStream,
     response: Response<T>,
     filename: String,
 ) -> std::io::Result<()> {
@@ -21,7 +21,7 @@ fn log_and_write_response<T: std::io::Read>(
     write_response(w, response)
 }
 
-fn write_not_found(w: &mut impl Write, filename: String) -> std::io::Result<()> {
+fn write_not_found(w: &mut TcpStream, filename: String) -> std::io::Result<()> {
     let response = Response::builder()
         .status(StatusCode::NOT_FOUND)
         .header(header::CONTENT_LENGTH, 0)

@@ -1,6 +1,6 @@
 use std::{
-    io::{Cursor, Write},
-    net::TcpListener,
+    io::{Cursor},
+    net::{TcpListener, TcpStream},
     thread, time,
 };
 
@@ -20,7 +20,7 @@ const PAGE: &str = "\
         </body>\
     </html>";
 
-fn respond_page(stream: &mut dyn Write) -> std::io::Result<()> {
+fn respond_page(stream: &mut TcpStream) -> std::io::Result<()> {
     let response = Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/html")
@@ -33,7 +33,7 @@ fn respond_page(stream: &mut dyn Write) -> std::io::Result<()> {
     Ok(())
 }
 
-fn respond_stream(stream: &mut dyn Write) -> std::io::Result<()> {
+fn respond_stream(stream: &mut TcpStream) -> std::io::Result<()> {
     let response = Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/event-stream")

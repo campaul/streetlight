@@ -7,7 +7,13 @@ fn main() -> std::io::Result<()> {
 
     for stream in listener.incoming() {
         if let Ok(mut s) = stream {
-            let request = read_request(&mut s)?;
+            let request = match read_request(&mut s) {
+                Ok(r) => r,
+                Err(e) => {
+                    println!("{}", e);
+                    continue
+                }
+            };
 
             let response_body = format!("<h1>You requested {}</h1>", request.uri());
 

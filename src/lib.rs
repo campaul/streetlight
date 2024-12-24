@@ -1,4 +1,5 @@
 use std::io::{prelude::*, BufReader, Cursor};
+use std::net::TcpStream;
 
 pub use http::{header, Method, Request, Response, StatusCode, Uri, Version};
 use http::{HeaderName, HeaderValue};
@@ -53,8 +54,8 @@ fn parse_header(line: &str) -> std::io::Result<(HeaderName, HeaderValue)> {
     }
 }
 
-pub fn read_request(reader: &mut dyn Read) -> std::io::Result<Request<impl Read>> {
-    let mut buf_reader = BufReader::new(reader);
+pub fn read_request(tcp_stream: &mut TcpStream) -> std::io::Result<Request<impl Read>> {
+    let mut buf_reader = BufReader::new(tcp_stream);
     let mut request = Request::builder();
 
     let mut start_line = String::new();
@@ -115,8 +116,8 @@ pub fn read_request(reader: &mut dyn Read) -> std::io::Result<Request<impl Read>
     }
 }
 
-pub fn read_response(reader: &mut dyn Read) -> std::io::Result<Response<impl Read>> {
-    let mut buf_reader = BufReader::new(reader);
+pub fn read_response(tcp_stream: &mut TcpStream) -> std::io::Result<Response<impl Read>> {
+    let mut buf_reader = BufReader::new(tcp_stream);
     let mut response = Response::builder();
 
     let mut start_line = String::new();
@@ -169,7 +170,7 @@ pub fn read_response(reader: &mut dyn Read) -> std::io::Result<Response<impl Rea
 }
 
 pub fn write_request(
-    writer: &mut dyn Write,
+    tcp_stream: &mut TcpStream,
     mut request: Request<impl Read>,
 ) -> std::io::Result<()> {
     let method = request.method();
@@ -177,15 +178,15 @@ pub fn write_request(
     let version = format!("{:?}", request.version());
     let start_line = format!("{} {} {}\r\n", method, uri, version);
 
-    writer.write_all(start_line.as_bytes())?;
+    tcp_stream.write_all(start_line.as_bytes())?;
 
     for (header_name, header_value) in request.headers().iter() {
         if let Ok(value) = header_value.to_str() {
-            writer.write(format!("{}: {}\r\n", header_name, value).as_bytes())?;
+            tcp_stream.write(format!("{}: {}\r\n", header_name, value).as_bytes())?;
         }
     }
 
-    writer.write_all("\r\n".as_bytes())?;
+    tcp_stream.write_all("\r\n".as_bytes())?;
 
     match request.headers().get(header::CONTENT_LENGTH) {
         Some(v) => {
@@ -197,7 +198,7 @@ pub fn write_request(
                 buf_reader.read_exact(&mut body)?;
             }
 
-            writer.write_all(&body)?;
+            tcp_stream.write_all(&body)?;
         }
         None => {}
     }
@@ -206,22 +207,22 @@ pub fn write_request(
 }
 
 pub fn write_response(
-    writer: &mut dyn Write,
+    tcp_stream: &mut TcpStream,
     mut response: Response<impl Read>,
 ) -> std::io::Result<()> {
     let version = format!("{:?}", response.version());
     let status = response.status();
     let start_line = format!("{} {}\r\n", version, status);
 
-    writer.write_all(start_line.as_bytes())?;
+    tcp_stream.write_all(start_line.as_bytes())?;
 
     for (header_name, header_value) in response.headers().iter() {
         if let Ok(value) = header_value.to_str() {
-            writer.write(format!("{}: {}\r\n", header_name, value).as_bytes())?;
+            tcp_stream.write(format!("{}: {}\r\n", header_name, value).as_bytes())?;
         }
     }
 
-    writer.write_all("\r\n".as_bytes())?;
+    tcp_stream.write_all("\r\n".as_bytes())?;
 
     match response.headers().get(header::CONTENT_LENGTH) {
         Some(v) => {
@@ -233,7 +234,7 @@ pub fn write_response(
                 buf_reader.read_exact(&mut body)?;
             }
 
-            writer.write_all(&body)?;
+            tcp_stream.write_all(&body)?;
         }
         None => {}
     }
@@ -241,8 +242,8 @@ pub fn write_response(
     Ok(())
 }
 
-pub fn read_chunk(reader: &mut dyn Read) -> std::io::Result<Vec<u8>> {
-    let mut buf_reader = BufReader::new(reader);
+pub fn read_chunk(tcp_stream: &mut TcpStream) -> std::io::Result<Vec<u8>> {
+    let mut buf_reader = BufReader::new(tcp_stream);
 
     let mut len = String::new();
     buf_reader.read_line(&mut len)?;
@@ -265,18 +266,16 @@ pub fn read_chunk(reader: &mut dyn Read) -> std::io::Result<Vec<u8>> {
     }
 }
 
-pub fn write_chunk(writer: &mut dyn Write, chunk: &[u8]) -> std::io::Result<()> {
-    writer.write_all(format!("{}\r\n", chunk.len()).as_bytes())?;
-    writer.write_all(chunk)?;
-    writer.write_all("\r\n".as_bytes())?;
+pub fn write_chunk(tcp_stream: &mut TcpStream, chunk: &[u8]) -> std::io::Result<()> {
+    tcp_stream.write_all(format!("{}\r\n", chunk.len()).as_bytes())?;
+    tcp_stream.write_all(chunk)?;
+    tcp_stream.write_all("\r\n".as_bytes())?;
 
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use std::str;
-
     use super::*;
 
     #[test]
@@ -285,24 +284,47 @@ mod tests {
                             host: example.com\r\n\
                             \r\n";
 
-        let request = read_request(&mut Cursor::new(request_text.as_bytes())).unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut tcp_stream = std::net::TcpStream::connect(addr).unwrap();
+        tcp_stream.write(request_text.as_bytes()).unwrap();
 
-        assert!(request.method() == "GET");
-        assert!(request.uri() == "/");
-        assert!(request.version() == Version::HTTP_11);
+        for stream in listener.incoming() {
+            if let Ok(mut s) = stream {
+                let request = read_request(&mut s).unwrap();
 
-        assert!(request.headers().get(header::HOST).unwrap() == "example.com");
+                assert!(request.method() == "GET");
+                assert!(request.uri() == "/");
+                assert!(request.version() == Version::HTTP_11);
+
+                assert!(request.headers().get(header::HOST).unwrap() == "example.com");
+
+                break;
+            }
+        }
     }
 
     #[test]
     fn read_simple_response() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut tcp_stream = std::net::TcpStream::connect(addr).unwrap();
+
         let response_text = "HTTP/1.1 200 OK\r\n\
                             content-type: text/html\r\n\
                             content-length: 20\r\n\
                             \r\n\
                             <h1>Hello World</h1>";
 
-        let mut response = read_response(&mut Cursor::new(response_text.as_bytes())).unwrap();
+        for stream in listener.incoming() {
+            if let Ok(mut s) = stream {
+                s.write(response_text.as_bytes()).unwrap();
+
+                break;
+            }
+        }
+
+        let mut response = read_response(&mut tcp_stream).unwrap();
 
         assert!(response.version() == Version::HTTP_11);
         assert!(response.status() == StatusCode::OK);
@@ -314,12 +336,15 @@ mod tests {
         let mut body_buffer: Vec<u8> = vec![0; 20];
         response.body_mut().read_exact(&mut body_buffer).unwrap();
 
-        assert!(str::from_utf8(&body_buffer).unwrap() == "<h1>Hello World</h1>");
+        assert!(std::str::from_utf8(&body_buffer).unwrap() == "<h1>Hello World</h1>");
     }
 
     #[test]
     fn write_simple_request() {
         let body: Cursor<Vec<u8>> = Cursor::new(vec![]);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut tcp_stream = std::net::TcpStream::connect(addr).unwrap();
 
         let request = Request::builder()
             .method("GET")
@@ -329,19 +354,34 @@ mod tests {
             .body(body)
             .unwrap();
 
-        let mut request_bytes: Vec<u8> = vec![];
-        write_request(&mut request_bytes, request).unwrap();
+        write_request(&mut tcp_stream, request).unwrap();
 
         let request_text = "GET / HTTP/1.1\r\n\
                             host: example.com\r\n\
                             \r\n";
 
-        assert!(str::from_utf8(&request_bytes).unwrap() == request_text);
+        for stream in listener.incoming() {
+            if let Ok(s) = stream {
+                let mut buf_reader = BufReader::new(s);
+                let mut buffer = String::new();
+
+                for _ in 0..request_text.lines().count() {
+                    buf_reader.read_line(&mut buffer).unwrap();
+                }
+
+                assert!(buffer.as_str() == request_text);
+
+                break;
+            }
+        }
     }
 
     #[test]
     fn write_simple_response() {
         let body: Cursor<Vec<u8>> = Cursor::new("<h1>Hello World</h1>".as_bytes().to_vec());
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let tcp_stream = std::net::TcpStream::connect(addr).unwrap();
 
         let response = Response::builder()
             .version(Version::HTTP_11)
@@ -351,8 +391,13 @@ mod tests {
             .body(body)
             .unwrap();
 
-        let mut response_bytes: Vec<u8> = vec![];
-        write_response(&mut response_bytes, response).unwrap();
+        for stream in listener.incoming() {
+            if let Ok(mut s) = stream {
+                write_response(&mut s, response).unwrap();
+
+                break;
+            }
+        }
 
         let response_text = "HTTP/1.1 200 OK\r\n\
                             content-type: text/html\r\n\
@@ -360,6 +405,13 @@ mod tests {
                             \r\n\
                             <h1>Hello World</h1>";
 
-        assert!(str::from_utf8(&response_bytes).unwrap() == response_text);
+        let mut buf_reader = BufReader::new(tcp_stream);
+        let mut buffer = String::new();
+
+        for _ in 0..response_text.lines().count() {
+            buf_reader.read_line(&mut buffer).unwrap();
+        }
+
+        assert!(buffer.as_str() == response_text);
     }
 }
